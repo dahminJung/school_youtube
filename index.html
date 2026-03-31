@@ -9,6 +9,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
+  <!-- HLS.js for playing proxied video streams -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
 </head>
 <body>
 
@@ -28,11 +30,9 @@
       </form>
 
       <div class="header-actions">
-        <!-- Settings button -->
         <button id="settings-btn" class="icon-btn" title="프록시 설정">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         </button>
-        <!-- API key button -->
         <button id="api-key-btn" class="icon-btn" title="API 키 설정">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
         </button>
@@ -53,12 +53,12 @@
     </div>
   </div>
 
-  <!-- ===== SETTINGS MODAL (Proxy) ===== -->
+  <!-- ===== SETTINGS MODAL (Proxy API) ===== -->
   <div id="settings-modal" class="modal-overlay" hidden>
-    <div class="modal">
+    <div class="modal modal-wide">
       <h2>⚙️ 영상 재생 설정</h2>
-      <p>학교에서 YouTube가 차단된 경우, 다른 프록시 서버를 선택하면 영상을 시청할 수 있습니다.</p>
-      <label class="select-label" for="proxy-select">재생 프록시 선택</label>
+      <p>영상 스트림을 가져올 API 서버를 선택합니다. iframe을 사용하지 않고 영상 데이터를 직접 받아오므로 차단을 우회할 수 있습니다.</p>
+      <label class="select-label" for="proxy-select">Piped API 서버</label>
       <select id="proxy-select"></select>
       <div class="test-row">
         <button id="settings-test-btn" class="btn-outline">연결 테스트</button>
@@ -66,7 +66,7 @@
       </div>
       <div id="test-result" class="test-result"></div>
       <div class="proxy-tip">
-        <strong>💡 핵심:</strong> 학교에서 YouTube가 차단되면 <em>Invidious</em> 계열을 먼저 시도하세요. Invidious는 영상 스트림 자체를 서버가 대신 전송해줍니다. <em>자동 탐지</em>를 누르면 작동하는 프록시를 자동으로 찾아줍니다.
+        <strong>🛡️ 작동 원리:</strong> Piped API가 YouTube 영상 스트림을 자체 서버로 중계합니다. 여기서는 <em>iframe 임베드가 아닌</em> <em>HTML5 비디오 플레이어</em>로 직접 재생하므로 임베드 차단과 무관합니다.
       </div>
       <div class="modal-actions">
         <button id="settings-save-btn" class="btn-primary">적용</button>
@@ -78,31 +78,39 @@
   <!-- ===== MAIN CONTENT ===== -->
   <main id="main-content">
 
-    <!-- Player Section (hidden until a video is selected) -->
+    <!-- Player Section — native HTML5 video, NO iframe -->
     <section id="player-section" class="player-section" hidden>
       <div class="player-wrapper">
         <div class="player-container">
-          <iframe
-            id="player-iframe"
-            src=""
-            title="영상 플레이어"
-            frameborder="0"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-            referrerpolicy="no-referrer"
-            sandbox="allow-scripts allow-same-origin allow-popups allow-presentation"
-            allowfullscreen
-          ></iframe>
+          <video
+            id="player-video"
+            controls
+            autoplay
+            playsinline
+            crossorigin="anonymous"
+            poster=""
+          ></video>
+          <!-- Loading overlay on the video -->
+          <div id="player-loading" class="player-loading" hidden>
+            <div class="spinner"></div>
+            <span>영상 스트림 로딩 중…</span>
+          </div>
+          <!-- Error overlay -->
+          <div id="player-error" class="player-error-overlay" hidden>
+            <div class="player-error-content">
+              <span class="player-error-icon">⚠️</span>
+              <p id="player-error-msg">스트림 로드 실패</p>
+              <div class="player-error-actions">
+                <button id="retry-api-btn" class="btn-primary btn-small">🔄 다른 API로 재시도</button>
+                <button id="retry-same-btn" class="btn-secondary btn-small">다시 시도</button>
+              </div>
+            </div>
+          </div>
         </div>
         <div id="player-info" class="player-info">
           <div class="player-info-top">
             <h1 id="player-title"></h1>
-            <div class="proxy-controls">
-              <span id="proxy-badge" class="proxy-badge" hidden></span>
-              <button id="retry-proxy-btn" class="btn-retry" title="차단 시 다른 프록시로 전환">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-                다른 프록시
-              </button>
-            </div>
+            <span id="proxy-badge" class="proxy-badge" hidden></span>
           </div>
           <div class="player-meta">
             <span id="player-channel" class="channel-name"></span>
@@ -113,7 +121,7 @@
       </div>
     </section>
 
-    <!-- Welcome hero (shown before first search) -->
+    <!-- Welcome hero -->
     <section id="welcome-hero" class="welcome-hero">
       <div class="hero-content">
         <svg class="hero-icon" viewBox="0 0 80 56" fill="none"><rect width="80" height="56" rx="14" fill="#FF0033"/><polygon points="31,13 31,43 57,28" fill="#fff"/></svg>
@@ -138,7 +146,6 @@
 
     <!-- Error Message -->
     <div id="error-msg" class="error-msg" hidden></div>
-
   </main>
 
   <script src="script.js"></script>
