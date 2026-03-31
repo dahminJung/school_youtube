@@ -1,7 +1,7 @@
 /* ============================================
    SchoolTube – script.js
    YouTube Data API v3  ·  Search & Play
-   Proxy-fallback embed system
+   Multi-proxy fallback with auto-detection
    ============================================ */
 
 (() => {
@@ -13,36 +13,74 @@
   const STORAGE_KEY = "schooltube_api_key";
   const PROXY_KEY = "schooltube_proxy";
 
-  // Embed proxy list — auto-fallback order
-  // Each entry: { name, embedUrl(videoId) }
+  // ─────────────────────────────────────────────
+  // Proxy list — ordered by reliability
+  // `local=true` on Invidious = server proxies the video stream
+  // Piped always proxies video through its backend
+  // ─────────────────────────────────────────────
   const PROXY_LIST = [
     {
-      name: "YouTube (기본)",
-      embed: (id) => `https://www.youtube.com/embed/${id}?autoplay=1&rel=0`,
+      name: "Invidious (nadeko) 🇨🇱",
+      embed: (id) =>
+        `https://inv.nadeko.net/embed/${id}?autoplay=1&local=true`,
+      test: "https://inv.nadeko.net",
+      type: "invidious",
     },
     {
-      name: "YouTube Nocookie",
-      embed: (id) => `https://www.youtube-nocookie.com/embed/${id}?autoplay=1&rel=0`,
+      name: "Invidious (nerdvpn) 🇺🇦",
+      embed: (id) =>
+        `https://invidious.nerdvpn.de/embed/${id}?autoplay=1&local=true`,
+      test: "https://invidious.nerdvpn.de",
+      type: "invidious",
     },
     {
-      name: "Invidious (nerdvpn)",
-      embed: (id) => `https://invidious.nerdvpn.de/embed/${id}?autoplay=1`,
+      name: "Invidious (yewtu.be) 🇩🇪",
+      embed: (id) =>
+        `https://yewtu.be/embed/${id}?autoplay=1&local=true`,
+      test: "https://yewtu.be",
+      type: "invidious",
     },
     {
-      name: "Invidious (privacyredirect)",
-      embed: (id) => `https://invidious.privacyredirect.com/embed/${id}?autoplay=1`,
+      name: "Piped (공식) 🌐",
+      embed: (id) =>
+        `https://piped.video/embed/${id}?autoplay=1`,
+      test: "https://piped.video",
+      type: "piped",
     },
     {
-      name: "Piped (video)",
-      embed: (id) => `https://piped.video/embed/${id}?autoplay=1`,
+      name: "Piped (kavin) 🇳🇱",
+      embed: (id) =>
+        `https://piped.kavin.rocks/embed/${id}?autoplay=1`,
+      test: "https://piped.kavin.rocks",
+      type: "piped",
     },
     {
-      name: "Piped (kavin)",
-      embed: (id) => `https://piped.kavin.rocks/embed/${id}?autoplay=1`,
+      name: "Piped (adminforge) 🇩🇪",
+      embed: (id) =>
+        `https://piped.adminforge.de/embed/${id}?autoplay=1`,
+      test: "https://piped.adminforge.de",
+      type: "piped",
     },
     {
-      name: "Invidious (protokol)",
-      embed: (id) => `https://invidious.protokol.wtf/embed/${id}?autoplay=1`,
+      name: "Piped (private.coffee) 🇦🇹",
+      embed: (id) =>
+        `https://watch.piped.private.coffee/embed/${id}?autoplay=1`,
+      test: "https://watch.piped.private.coffee",
+      type: "piped",
+    },
+    {
+      name: "Piped (leptons) 🇦🇹",
+      embed: (id) =>
+        `https://piped.leptons.xyz/embed/${id}?autoplay=1`,
+      test: "https://piped.leptons.xyz",
+      type: "piped",
+    },
+    {
+      name: "YouTube (기본 - 차단 가능)",
+      embed: (id) =>
+        `https://www.youtube.com/embed/${id}?autoplay=1&rel=0`,
+      test: "https://www.youtube.com",
+      type: "youtube",
     },
   ];
 
@@ -61,6 +99,7 @@
   const settingsSaveBtn = $("#settings-save-btn");
   const settingsCancelBtn = $("#settings-cancel-btn");
   const settingsTestBtn = $("#settings-test-btn");
+  const autoDetectBtn = $("#auto-detect-btn");
   const testResult = $("#test-result");
   const welcomeHero = $("#welcome-hero");
   const playerSection = $("#player-section");
@@ -93,14 +132,7 @@
   function init() {
     if (!apiKey) showApiModal();
 
-    // Populate proxy select
-    PROXY_LIST.forEach((p, i) => {
-      const opt = document.createElement("option");
-      opt.value = i;
-      opt.textContent = p.name;
-      if (i === currentProxyIndex) opt.selected = true;
-      proxySelect.appendChild(opt);
-    });
+    populateProxySelect();
 
     searchForm.addEventListener("submit", onSearch);
     apiKeyBtn.addEventListener("click", showApiModal);
@@ -113,7 +145,8 @@
     settingsBtn.addEventListener("click", showSettingsModal);
     settingsSaveBtn.addEventListener("click", saveSettings);
     settingsCancelBtn.addEventListener("click", hideSettingsModal);
-    settingsTestBtn.addEventListener("click", testProxy);
+    settingsTestBtn.addEventListener("click", () => testProxy(parseInt(proxySelect.value, 10)));
+    autoDetectBtn.addEventListener("click", autoDetect);
     settingsModal.addEventListener("click", (e) => {
       if (e.target === settingsModal) hideSettingsModal();
     });
@@ -132,18 +165,17 @@
         if (!settingsModal.hidden) hideSettingsModal();
       }
     });
-
-    // Listen for iframe load errors
-    playerIframe.addEventListener("load", onIframeLoad);
   }
 
-  // ── Iframe load detection ──
-  function onIframeLoad() {
-    // Update badge with current proxy
-    if (proxyBadge) {
-      proxyBadge.textContent = PROXY_LIST[currentProxyIndex].name;
-      proxyBadge.hidden = false;
-    }
+  function populateProxySelect() {
+    proxySelect.innerHTML = "";
+    PROXY_LIST.forEach((p, i) => {
+      const opt = document.createElement("option");
+      opt.value = i;
+      opt.textContent = `${p.name} [${p.type}]`;
+      if (i === currentProxyIndex) opt.selected = true;
+      proxySelect.appendChild(opt);
+    });
   }
 
   // ── Cycle to next proxy ──
@@ -163,8 +195,71 @@
       );
     }
 
-    // Show a toast
     showToast(`🔄 ${PROXY_LIST[currentProxyIndex].name} 으로 전환됨`);
+  }
+
+  // ── Auto-detect best proxy ──
+  async function autoDetect() {
+    autoDetectBtn.disabled = true;
+    autoDetectBtn.textContent = "🔍 탐지 중…";
+    testResult.textContent = "모든 프록시를 순서대로 테스트합니다…";
+    testResult.className = "test-result testing";
+
+    let foundIndex = -1;
+
+    for (let i = 0; i < PROXY_LIST.length; i++) {
+      const proxy = PROXY_LIST[i];
+      testResult.textContent = `(${i + 1}/${PROXY_LIST.length}) ${proxy.name} 테스트 중…`;
+
+      const ok = await checkProxyReachable(proxy.test);
+      if (ok) {
+        foundIndex = i;
+        break;
+      }
+    }
+
+    autoDetectBtn.disabled = false;
+    autoDetectBtn.textContent = "🔍 자동 탐지";
+
+    if (foundIndex >= 0) {
+      proxySelect.value = foundIndex;
+      testResult.textContent = `✅ ${PROXY_LIST[foundIndex].name} 연결 가능! 적용 버튼을 눌러주세요.`;
+      testResult.className = "test-result success";
+    } else {
+      testResult.textContent = "❌ 연결 가능한 프록시를 찾지 못했습니다.";
+      testResult.className = "test-result fail";
+    }
+  }
+
+  async function checkProxyReachable(url) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 4000);
+      await fetch(url, { mode: "no-cors", signal: controller.signal });
+      clearTimeout(timer);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // ── Test single proxy ──
+  async function testProxy(idx) {
+    const proxy = PROXY_LIST[idx];
+    settingsTestBtn.disabled = true;
+    testResult.textContent = `${proxy.name} 테스트 중…`;
+    testResult.className = "test-result testing";
+
+    const ok = await checkProxyReachable(proxy.test);
+
+    settingsTestBtn.disabled = false;
+    if (ok) {
+      testResult.textContent = "✅ 연결 가능 (차단되지 않음)";
+      testResult.className = "test-result success";
+    } else {
+      testResult.textContent = "❌ 연결 실패 또는 차단됨";
+      testResult.className = "test-result fail";
+    }
   }
 
   // ── Toast Notification ──
@@ -176,6 +271,8 @@
       document.body.appendChild(toast);
     }
     toast.textContent = msg;
+    toast.classList.remove("show");
+    void toast.offsetWidth; // force reflow
     toast.classList.add("show");
     setTimeout(() => toast.classList.remove("show"), 2800);
   }
@@ -219,7 +316,6 @@
     localStorage.setItem(PROXY_KEY, currentProxyIndex);
     hideSettingsModal();
 
-    // Re-embed current video if playing
     if (currentVideoId) {
       playVideo(
         currentVideoId,
@@ -230,31 +326,6 @@
       );
     }
     showToast(`✅ ${PROXY_LIST[currentProxyIndex].name} 적용됨`);
-  }
-
-  async function testProxy() {
-    const idx = parseInt(proxySelect.value, 10);
-    const proxy = PROXY_LIST[idx];
-    testResult.textContent = "테스트 중…";
-    testResult.className = "test-result testing";
-
-    // Test by trying to load the embed URL for a known video
-    const testUrl = proxy.embed("dQw4w9WgXcQ"); // short well-known video
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 5000);
-      const res = await fetch(testUrl, {
-        mode: "no-cors",
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      // no-cors always returns opaque, so if we get here it didn't hard-fail
-      testResult.textContent = "✅ 연결 가능 (차단되지 않음)";
-      testResult.className = "test-result success";
-    } catch (err) {
-      testResult.textContent = "❌ 연결 실패 또는 차단됨";
-      testResult.className = "test-result fail";
-    }
   }
 
   // ── Search ──
@@ -315,8 +386,7 @@
     const res = await fetch(`${API_BASE}/search?${params}`);
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      const msg =
-        body?.error?.message || `API 오류 (${res.status})`;
+      const msg = body?.error?.message || `API 오류 (${res.status})`;
       if (res.status === 403) {
         throw new Error(
           "API 키가 유효하지 않거나 할당량이 초과되었습니다. 키를 확인해 주세요."
@@ -382,13 +452,7 @@
     `;
 
     const play = () =>
-      playVideo(
-        videoId,
-        s.title,
-        s.channelTitle,
-        s.publishedAt,
-        s.description
-      );
+      playVideo(videoId, s.title, s.channelTitle, s.publishedAt, s.description);
 
     card.addEventListener("click", play);
     card.addEventListener("keydown", (e) => {

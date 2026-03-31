@@ -617,8 +617,9 @@ button {
 .test-row {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 14px;
+  gap: 10px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
 }
 
 .btn-outline {
@@ -639,9 +640,29 @@ button {
   border-color: #555;
 }
 
+.btn-outline:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-auto {
+  background: rgba(96, 165, 250, 0.08);
+  border-color: rgba(96, 165, 250, 0.3);
+  color: #60a5fa;
+}
+
+.btn-auto:hover {
+  background: rgba(96, 165, 250, 0.15);
+  border-color: #60a5fa;
+  color: #93bbfd;
+}
+
 .test-result {
   font-size: 0.82rem;
   color: var(--text-muted);
+  min-height: 1.2em;
+  margin-bottom: 10px;
+  padding: 0 2px;
 }
 
 .test-result.testing {
