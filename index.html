@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SchoolTube - 학교 영상 검색</title>
+  <meta name="description" content="YouTube 영상을 검색하고 바로 시청하세요." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ===== HEADER / NAV ===== -->
+  <header id="site-header">
+    <div class="header-inner">
+      <a href="#" class="logo" id="logo">
+        <svg class="logo-icon" viewBox="0 0 28 20" fill="none"><rect width="28" height="20" rx="5" fill="#FF0033"/><polygon points="11,4.5 11,15.5 20,10" fill="#fff"/></svg>
+        <span>SchoolTube</span>
+      </a>
+
+      <form id="search-form" class="search-bar" autocomplete="off">
+        <input id="search-input" type="text" placeholder="검색어를 입력하세요…" aria-label="검색" />
+        <button id="search-btn" type="submit" aria-label="검색 실행">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>
+        </button>
+      </form>
+
+      <button id="api-key-btn" class="icon-btn" title="API 키 설정">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ===== API KEY MODAL ===== -->
+  <div id="api-modal" class="modal-overlay" hidden>
+    <div class="modal">
+      <h2>YouTube API 키 설정</h2>
+      <p>YouTube Data API v3 키를 입력하세요.<br><a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console</a>에서 발급받을 수 있습니다.</p>
+      <input id="api-key-input" type="text" placeholder="AIzaSy…" />
+      <div class="modal-actions">
+        <button id="api-save-btn" class="btn-primary">저장</button>
+        <button id="api-cancel-btn" class="btn-secondary">취소</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== MAIN CONTENT ===== -->
+  <main id="main-content">
+
+    <!-- Player Section (hidden until a video is selected) -->
+    <section id="player-section" class="player-section" hidden>
+      <div class="player-wrapper">
+        <div class="player-container">
+          <iframe
+            id="player-iframe"
+            src=""
+            title="영상 플레이어"
+            frameborder="0"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowfullscreen
+          ></iframe>
+        </div>
+        <div id="player-info" class="player-info">
+          <h1 id="player-title"></h1>
+          <div class="player-meta">
+            <span id="player-channel" class="channel-name"></span>
+            <span id="player-date" class="publish-date"></span>
+          </div>
+          <p id="player-desc" class="player-desc"></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Welcome hero (shown before first search) -->
+    <section id="welcome-hero" class="welcome-hero">
+      <div class="hero-content">
+        <svg class="hero-icon" viewBox="0 0 80 56" fill="none"><rect width="80" height="56" rx="14" fill="#FF0033"/><polygon points="31,13 31,43 57,28" fill="#fff"/></svg>
+        <h2>무엇을 시청하고 싶으신가요?</h2>
+        <p>검색어를 입력해 YouTube 영상을 찾아보세요.</p>
+      </div>
+    </section>
+
+    <!-- Search Results Grid -->
+    <section id="results-section" class="results-section" hidden>
+      <h2 id="results-heading" class="results-heading"></h2>
+      <div id="results-grid" class="results-grid"></div>
+      <div id="load-more-wrap" class="load-more-wrap" hidden>
+        <button id="load-more-btn" class="btn-primary">더 보기</button>
+      </div>
+    </section>
+
+    <!-- Loading Spinner -->
+    <div id="loader" class="loader" hidden>
+      <div class="spinner"></div>
+    </div>
+
+    <!-- Error Message -->
+    <div id="error-msg" class="error-msg" hidden></div>
+
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
