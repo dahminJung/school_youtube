@@ -1,6 +1,6 @@
 /* ============================================
    SchoolTube – script.js
-   Piped API + HLS.js  ·  No iframe needed
+   Cloudflare Worker proxy + HLS.js
    ============================================ */
 
 (() => {
@@ -10,25 +10,7 @@
   const YT_API_BASE = "https://www.googleapis.com/youtube/v3";
   const MAX_RESULTS = 12;
   const STORAGE_KEY = "schooltube_api_key";
-  const PROXY_KEY = "schooltube_piped_api";
-
-  // ─────────────────────────────────────────────
-  // Piped API instances — returns stream URLs
-  // These proxy the actual video data through
-  // their own servers, bypassing YouTube blocks
-  // ─────────────────────────────────────────────
-  const PIPED_API_LIST = [
-    { name: "Kavin (공식) 🌐", url: "https://pipedapi.kavin.rocks" },
-    { name: "Adminforge 🇩🇪", url: "https://pipedapi.adminforge.de" },
-    { name: "Leptons 🇦🇹", url: "https://pipedapi.leptons.xyz" },
-    { name: "Private.coffee 🇦🇹", url: "https://api.piped.private.coffee" },
-    { name: "Nosebs 🇫🇮", url: "https://pipedapi.nosebs.ru" },
-    { name: "Kavin Libre 🇳🇱", url: "https://pipedapi-libre.kavin.rocks" },
-    { name: "Drgns 🇺🇸", url: "https://pipedapi.drgns.space" },
-    { name: "Privacy.com.de 🇩🇪", url: "https://piped-api.privacy.com.de" },
-    { name: "Piped.yt 🇩🇪", url: "https://api.piped.yt" },
-    { name: "Codespace 🇨🇿", url: "https://piped-api.codespace.cz" },
-  ];
+  const WORKER_KEY = "schooltube_worker_url";
 
   // ── DOM refs ──
   const $ = (sel) => document.querySelector(sel);
@@ -41,11 +23,10 @@
   const apiSaveBtn = $("#api-save-btn");
   const apiCancelBtn = $("#api-cancel-btn");
   const settingsModal = $("#settings-modal");
-  const proxySelect = $("#proxy-select");
+  const workerUrlInput = $("#worker-url-input");
   const settingsSaveBtn = $("#settings-save-btn");
   const settingsCancelBtn = $("#settings-cancel-btn");
   const settingsTestBtn = $("#settings-test-btn");
-  const autoDetectBtn = $("#auto-detect-btn");
   const testResult = $("#test-result");
   const welcomeHero = $("#welcome-hero");
   const playerSection = $("#player-section");
@@ -58,8 +39,7 @@
   const playerLoading = $("#player-loading");
   const playerError = $("#player-error");
   const playerErrorMsg = $("#player-error-msg");
-  const retryApiBtn = $("#retry-api-btn");
-  const retrySameBtn = $("#retry-same-btn");
+  const retryBtn = $("#retry-btn");
   const resultsSection = $("#results-section");
   const resultsHeading = $("#results-heading");
   const resultsGrid = $("#results-grid");
@@ -71,8 +51,7 @@
 
   // ── State ──
   let apiKey = localStorage.getItem(STORAGE_KEY) || "";
-  let currentApiIndex = parseInt(localStorage.getItem(PROXY_KEY), 10) || 0;
-  if (currentApiIndex >= PIPED_API_LIST.length) currentApiIndex = 0;
+  let workerUrl = (localStorage.getItem(WORKER_KEY) || "").replace(/\/+$/, "");
   let currentQuery = "";
   let nextPageToken = "";
   let currentVideoId = "";
@@ -82,8 +61,7 @@
   // ── Init ──
   function init() {
     if (!apiKey) showApiModal();
-
-    populateProxySelect();
+    else if (!workerUrl) showSettingsModal();
 
     searchForm.addEventListener("submit", onSearch);
     apiKeyBtn.addEventListener("click", showApiModal);
@@ -96,17 +74,12 @@
     settingsBtn.addEventListener("click", showSettingsModal);
     settingsSaveBtn.addEventListener("click", saveSettings);
     settingsCancelBtn.addEventListener("click", hideSettingsModal);
-    settingsTestBtn.addEventListener("click", () =>
-      testProxy(parseInt(proxySelect.value, 10))
-    );
-    autoDetectBtn.addEventListener("click", autoDetect);
+    settingsTestBtn.addEventListener("click", testWorker);
     settingsModal.addEventListener("click", (e) => {
       if (e.target === settingsModal) hideSettingsModal();
     });
 
-    retryApiBtn.addEventListener("click", cycleApiAndRetry);
-    retrySameBtn.addEventListener("click", retrySame);
-
+    retryBtn.addEventListener("click", retryCurrent);
     loadMoreBtn.addEventListener("click", loadMore);
     logo.addEventListener("click", (e) => {
       e.preventDefault();
@@ -121,26 +94,20 @@
     });
   }
 
-  function populateProxySelect() {
-    proxySelect.innerHTML = "";
-    PIPED_API_LIST.forEach((p, i) => {
-      const opt = document.createElement("option");
-      opt.value = i;
-      opt.textContent = p.name;
-      if (i === currentApiIndex) opt.selected = true;
-      proxySelect.appendChild(opt);
-    });
-  }
-
   // ─────────────────────────────────────────────
-  // VIDEO PLAYER — Piped API + HLS.js
+  // VIDEO PLAYER
   // ─────────────────────────────────────────────
 
   async function playVideo(videoId, title, channel, date, desc) {
+    if (!workerUrl) {
+      showSettingsModal();
+      showToast("⚠️ Worker URL을 먼저 설정해주세요.");
+      return;
+    }
+
     currentVideoId = videoId;
     currentVideoMeta = { title, channel, date, desc };
 
-    // Show player UI
     playerTitle.textContent = decodeHtml(title);
     playerChannel.textContent = decodeHtml(channel);
     playerDate.textContent = formatDate(date);
@@ -152,47 +119,42 @@
     updateBadge();
     playerSection.scrollIntoView({ behavior: "smooth", block: "start" });
 
-    // Destroy previous HLS instance
     destroyHls();
-
-    // Try loading stream
-    await loadStream(videoId, currentApiIndex);
+    await loadStream(videoId);
   }
 
-  async function loadStream(videoId, apiIndex) {
-    const api = PIPED_API_LIST[apiIndex];
+  async function loadStream(videoId) {
     playerLoading.hidden = false;
     playerError.hidden = true;
 
     try {
-      const streamData = await fetchPipedStream(api.url, videoId);
-      applyStream(streamData);
+      // Worker를 통해 Piped API 호출
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+
+      const res = await fetch(`${workerUrl}/streams/${videoId}`, {
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `응답 오류 (${res.status})`);
+      }
+
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      // 썸네일 설정
+      if (data.thumbnailUrl) {
+        playerVideo.poster = data.thumbnailUrl;
+      }
+
+      applyStream(data);
     } catch (err) {
-      console.error(`[${api.name}] Stream fetch failed:`, err);
-      showPlayerError(`${api.name}: ${err.message}`);
+      console.error("Stream load failed:", err);
+      showPlayerError(err.message);
     }
-  }
-
-  async function fetchPipedStream(apiBase, videoId) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10000);
-
-    const res = await fetch(`${apiBase}/streams/${videoId}`, {
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-
-    if (!res.ok) {
-      throw new Error(`API 응답 오류 (${res.status})`);
-    }
-
-    const data = await res.json();
-
-    if (data.error) {
-      throw new Error(data.error);
-    }
-
-    return data;
   }
 
   function applyStream(data) {
@@ -200,19 +162,17 @@
     playerLoading.hidden = true;
     playerError.hidden = true;
 
-    // Set poster
-    if (data.thumbnailUrl) {
-      playerVideo.poster = data.thumbnailUrl;
-    }
-
-    // Strategy 1: HLS stream (best quality, adaptive)
+    // ── Strategy 1: HLS (adaptive streaming) ──
     if (data.hls) {
-      if (Hls && Hls.isSupported()) {
+      if (typeof Hls !== "undefined" && Hls.isSupported()) {
         hlsInstance = new Hls({
           maxBufferLength: 30,
           maxMaxBufferLength: 60,
-          startLevel: -1, // auto quality
+          startLevel: -1,
+          // Worker가 이미 URL을 재작성했으므로
+          // HLS.js 요청은 자동으로 Worker를 경유
         });
+
         hlsInstance.loadSource(data.hls);
         hlsInstance.attachMedia(playerVideo);
 
@@ -220,9 +180,9 @@
           playerVideo.play().catch(() => {});
         });
 
-        hlsInstance.on(Hls.Events.ERROR, (event, errorData) => {
+        hlsInstance.on(Hls.Events.ERROR, (_event, errorData) => {
           if (errorData.fatal) {
-            console.error("HLS fatal error, trying MP4 fallback");
+            console.warn("HLS fatal error, trying MP4 fallback");
             destroyHls();
             tryMp4Fallback(data);
           }
@@ -230,7 +190,7 @@
         return;
       }
 
-      // Native HLS (Safari)
+      // Native HLS (Safari, iOS)
       if (playerVideo.canPlayType("application/vnd.apple.mpegurl")) {
         playerVideo.src = data.hls;
         playerVideo.play().catch(() => {});
@@ -238,23 +198,25 @@
       }
     }
 
-    // Strategy 2: Direct MP4 stream
+    // ── Strategy 2: Direct MP4 ──
     tryMp4Fallback(data);
   }
 
   function tryMp4Fallback(data) {
-    // Pick best muxed (video+audio) stream
+    // Muxed streams (video + audio combined)
     const muxed = (data.videoStreams || [])
       .filter((s) => !s.videoOnly && s.url)
       .sort((a, b) => (b.height || 0) - (a.height || 0));
 
     if (muxed.length > 0) {
-      playerVideo.src = muxed[0].url;
+      // 720p 이하를 우선 선택 (크롬북 성능 고려)
+      const preferred = muxed.find((s) => s.height <= 720) || muxed[0];
+      playerVideo.src = preferred.url;
       playerVideo.play().catch(() => {});
       return;
     }
 
-    // Strategy 3: Video-only stream (no audio, but at least shows video)
+    // Video-only fallback
     const videoOnly = (data.videoStreams || [])
       .filter((s) => s.url)
       .sort((a, b) => (b.height || 0) - (a.height || 0));
@@ -283,100 +245,75 @@
     playerErrorMsg.textContent = msg;
   }
 
-  function cycleApiAndRetry() {
-    currentApiIndex = (currentApiIndex + 1) % PIPED_API_LIST.length;
-    localStorage.setItem(PROXY_KEY, currentApiIndex);
-    proxySelect.value = currentApiIndex;
-    updateBadge();
-    showToast(`🔄 ${PIPED_API_LIST[currentApiIndex].name} 으로 전환`);
-
+  function retryCurrent() {
     if (currentVideoId) {
-      loadStream(currentVideoId, currentApiIndex);
-    }
-  }
-
-  function retrySame() {
-    if (currentVideoId) {
-      loadStream(currentVideoId, currentApiIndex);
+      loadStream(currentVideoId);
     }
   }
 
   function updateBadge() {
-    if (proxyBadge) {
-      proxyBadge.textContent = `API: ${PIPED_API_LIST[currentApiIndex].name}`;
-      proxyBadge.hidden = false;
-    }
-  }
-
-  // ─────────────────────────────────────────────
-  // AUTO DETECT — find first working Piped API
-  // ─────────────────────────────────────────────
-
-  async function autoDetect() {
-    autoDetectBtn.disabled = true;
-    autoDetectBtn.textContent = "🔍 탐지 중…";
-    testResult.textContent = "모든 API를 순서대로 테스트합니다…";
-    testResult.className = "test-result testing";
-
-    let foundIndex = -1;
-
-    for (let i = 0; i < PIPED_API_LIST.length; i++) {
-      const api = PIPED_API_LIST[i];
-      testResult.textContent = `(${i + 1}/${PIPED_API_LIST.length}) ${api.name} 테스트 중…`;
-
-      const ok = await checkApiHealth(api.url);
-      if (ok) {
-        foundIndex = i;
-        break;
+    if (proxyBadge && workerUrl) {
+      try {
+        const host = new URL(workerUrl).host;
+        proxyBadge.textContent = `via ${host}`;
+        proxyBadge.hidden = false;
+      } catch {
+        proxyBadge.hidden = true;
       }
     }
+  }
 
-    autoDetectBtn.disabled = false;
-    autoDetectBtn.textContent = "🔍 자동 탐지";
+  // ─────────────────────────────────────────────
+  // WORKER TEST
+  // ─────────────────────────────────────────────
 
-    if (foundIndex >= 0) {
-      proxySelect.value = foundIndex;
-      testResult.textContent = `✅ ${PIPED_API_LIST[foundIndex].name} — 정상 연결! 적용 버튼을 눌러주세요.`;
-      testResult.className = "test-result success";
-    } else {
-      testResult.textContent =
-        "❌ 모든 API 연결 실패. 네트워크를 확인하거나 나중에 다시 시도해 주세요.";
+  async function testWorker() {
+    const url = workerUrlInput.value.trim().replace(/\/+$/, "");
+    if (!url) {
+      testResult.textContent = "URL을 입력해주세요.";
       testResult.className = "test-result fail";
+      return;
     }
-  }
 
-  async function checkApiHealth(apiUrl) {
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 5000);
-      // Piped API healthcheck — just fetch a known video stream info
-      const res = await fetch(`${apiUrl}/streams/dQw4w9WgXcQ`, {
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      if (!res.ok) return false;
-      const data = await res.json();
-      return !data.error && (data.hls || (data.videoStreams && data.videoStreams.length > 0));
-    } catch {
-      return false;
-    }
-  }
-
-  async function testProxy(idx) {
-    const api = PIPED_API_LIST[idx];
     settingsTestBtn.disabled = true;
-    testResult.textContent = `${api.name} 테스트 중…`;
+    testResult.textContent = "Worker 연결 테스트 중…";
     testResult.className = "test-result testing";
 
-    const ok = await checkApiHealth(api.url);
+    try {
+      // Step 1: Health check
+      const controller1 = new AbortController();
+      const timer1 = setTimeout(() => controller1.abort(), 6000);
+      const res1 = await fetch(`${url}/health`, { signal: controller1.signal });
+      clearTimeout(timer1);
 
-    settingsTestBtn.disabled = false;
-    if (ok) {
-      testResult.textContent = "✅ API 정상 — 영상 스트림 수신 가능";
+      if (!res1.ok) throw new Error(`Health check 실패 (${res1.status})`);
+
+      testResult.textContent = "✓ Worker 연결됨. 영상 스트림 테스트 중…";
+
+      // Step 2: Stream test
+      const controller2 = new AbortController();
+      const timer2 = setTimeout(() => controller2.abort(), 12000);
+      const res2 = await fetch(`${url}/streams/dQw4w9WgXcQ`, {
+        signal: controller2.signal,
+      });
+      clearTimeout(timer2);
+
+      if (!res2.ok) throw new Error(`스트림 API 실패 (${res2.status})`);
+
+      const data = await res2.json();
+      if (data.error) throw new Error(data.error);
+
+      const hasStreams =
+        data.hls || (data.videoStreams && data.videoStreams.length > 0);
+      if (!hasStreams) throw new Error("스트림 URL 없음");
+
+      testResult.textContent = "✅ 완벽하게 작동합니다! 적용 버튼을 눌러주세요.";
       testResult.className = "test-result success";
-    } else {
-      testResult.textContent = "❌ API 연결 실패 또는 차단됨";
+    } catch (err) {
+      testResult.textContent = `❌ 실패: ${err.message}`;
       testResult.className = "test-result fail";
+    } finally {
+      settingsTestBtn.disabled = false;
     }
   }
 
@@ -413,28 +350,34 @@
     apiKey = key;
     localStorage.setItem(STORAGE_KEY, apiKey);
     hideApiModal();
+    if (!workerUrl) showSettingsModal();
   }
 
   // ── Settings Modal ──
   function showSettingsModal() {
-    proxySelect.value = currentApiIndex;
+    workerUrlInput.value = workerUrl;
     testResult.textContent = "";
     testResult.className = "test-result";
     settingsModal.hidden = false;
+    setTimeout(() => workerUrlInput.focus(), 80);
   }
   function hideSettingsModal() {
     settingsModal.hidden = true;
   }
   function saveSettings() {
-    currentApiIndex = parseInt(proxySelect.value, 10);
-    localStorage.setItem(PROXY_KEY, currentApiIndex);
+    const url = workerUrlInput.value.trim().replace(/\/+$/, "");
+    if (!url) {
+      workerUrlInput.focus();
+      return;
+    }
+    workerUrl = url;
+    localStorage.setItem(WORKER_KEY, workerUrl);
     hideSettingsModal();
     updateBadge();
-    showToast(`✅ ${PIPED_API_LIST[currentApiIndex].name} 적용됨`);
+    showToast("✅ Worker URL 저장됨");
 
-    // Re-load current video with new API
     if (currentVideoId) {
-      loadStream(currentVideoId, currentApiIndex);
+      loadStream(currentVideoId);
     }
   }
 
@@ -495,9 +438,7 @@
       const body = await res.json().catch(() => ({}));
       const msg = body?.error?.message || `API 오류 (${res.status})`;
       if (res.status === 403) {
-        throw new Error(
-          "API 키가 유효하지 않거나 할당량이 초과되었습니다."
-        );
+        throw new Error("API 키가 유효하지 않거나 할당량이 초과되었습니다.");
       }
       throw new Error(msg);
     }

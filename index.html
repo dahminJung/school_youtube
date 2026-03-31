@@ -9,12 +9,11 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
-  <!-- HLS.js for playing proxied video streams -->
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
 </head>
 <body>
 
-  <!-- ===== HEADER / NAV ===== -->
+  <!-- ===== HEADER ===== -->
   <header id="site-header">
     <div class="header-inner">
       <a href="#" class="logo" id="logo">
@@ -43,7 +42,7 @@
   <!-- ===== API KEY MODAL ===== -->
   <div id="api-modal" class="modal-overlay" hidden>
     <div class="modal">
-      <h2>YouTube API 키 설정</h2>
+      <h2>🔑 YouTube API 키</h2>
       <p>YouTube Data API v3 키를 입력하세요.<br><a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console</a>에서 발급받을 수 있습니다.</p>
       <input id="api-key-input" type="text" placeholder="AIzaSy…" />
       <div class="modal-actions">
@@ -53,21 +52,28 @@
     </div>
   </div>
 
-  <!-- ===== SETTINGS MODAL (Proxy API) ===== -->
+  <!-- ===== WORKER URL MODAL ===== -->
   <div id="settings-modal" class="modal-overlay" hidden>
     <div class="modal modal-wide">
-      <h2>⚙️ 영상 재생 설정</h2>
-      <p>영상 스트림을 가져올 API 서버를 선택합니다. iframe을 사용하지 않고 영상 데이터를 직접 받아오므로 차단을 우회할 수 있습니다.</p>
-      <label class="select-label" for="proxy-select">Piped API 서버</label>
-      <select id="proxy-select"></select>
+      <h2>⚙️ 프록시 서버 설정</h2>
+      <p>Cloudflare Worker URL을 입력하세요. Worker가 영상 스트림을 대신 가져와 학교 차단을 우회합니다.</p>
+
+      <label class="select-label" for="worker-url-input">Worker URL</label>
+      <input id="worker-url-input" type="url" placeholder="https://schooltube-proxy.xxx.workers.dev" />
+
       <div class="test-row">
         <button id="settings-test-btn" class="btn-outline">연결 테스트</button>
-        <button id="auto-detect-btn" class="btn-outline btn-auto">🔍 자동 탐지</button>
       </div>
       <div id="test-result" class="test-result"></div>
+
       <div class="proxy-tip">
-        <strong>🛡️ 작동 원리:</strong> Piped API가 YouTube 영상 스트림을 자체 서버로 중계합니다. 여기서는 <em>iframe 임베드가 아닌</em> <em>HTML5 비디오 플레이어</em>로 직접 재생하므로 임베드 차단과 무관합니다.
+        <strong>📋 Worker 배포 방법:</strong><br>
+        1. <a href="https://dash.cloudflare.com" target="_blank">dash.cloudflare.com</a> 회원가입 (무료)<br>
+        2. Workers & Pages → Create Worker<br>
+        3. <code>worker.js</code> 파일 내용 전부 복붙 → Deploy<br>
+        4. 생성된 URL을 여기에 입력
       </div>
+
       <div class="modal-actions">
         <button id="settings-save-btn" class="btn-primary">적용</button>
         <button id="settings-cancel-btn" class="btn-secondary">취소</button>
@@ -78,32 +84,20 @@
   <!-- ===== MAIN CONTENT ===== -->
   <main id="main-content">
 
-    <!-- Player Section — native HTML5 video, NO iframe -->
+    <!-- Player — native HTML5 video -->
     <section id="player-section" class="player-section" hidden>
       <div class="player-wrapper">
         <div class="player-container">
-          <video
-            id="player-video"
-            controls
-            autoplay
-            playsinline
-            crossorigin="anonymous"
-            poster=""
-          ></video>
-          <!-- Loading overlay on the video -->
+          <video id="player-video" controls autoplay playsinline></video>
           <div id="player-loading" class="player-loading" hidden>
             <div class="spinner"></div>
-            <span>영상 스트림 로딩 중…</span>
+            <span>영상 로딩 중…</span>
           </div>
-          <!-- Error overlay -->
           <div id="player-error" class="player-error-overlay" hidden>
             <div class="player-error-content">
               <span class="player-error-icon">⚠️</span>
               <p id="player-error-msg">스트림 로드 실패</p>
-              <div class="player-error-actions">
-                <button id="retry-api-btn" class="btn-primary btn-small">🔄 다른 API로 재시도</button>
-                <button id="retry-same-btn" class="btn-secondary btn-small">다시 시도</button>
-              </div>
+              <button id="retry-btn" class="btn-primary btn-small">🔄 다시 시도</button>
             </div>
           </div>
         </div>
@@ -121,7 +115,7 @@
       </div>
     </section>
 
-    <!-- Welcome hero -->
+    <!-- Welcome -->
     <section id="welcome-hero" class="welcome-hero">
       <div class="hero-content">
         <svg class="hero-icon" viewBox="0 0 80 56" fill="none"><rect width="80" height="56" rx="14" fill="#FF0033"/><polygon points="31,13 31,43 57,28" fill="#fff"/></svg>
@@ -130,7 +124,7 @@
       </div>
     </section>
 
-    <!-- Search Results Grid -->
+    <!-- Results -->
     <section id="results-section" class="results-section" hidden>
       <h2 id="results-heading" class="results-heading"></h2>
       <div id="results-grid" class="results-grid"></div>
@@ -139,12 +133,7 @@
       </div>
     </section>
 
-    <!-- Loading Spinner -->
-    <div id="loader" class="loader" hidden>
-      <div class="spinner"></div>
-    </div>
-
-    <!-- Error Message -->
+    <div id="loader" class="loader" hidden><div class="spinner"></div></div>
     <div id="error-msg" class="error-msg" hidden></div>
   </main>
 
