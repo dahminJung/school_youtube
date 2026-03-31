@@ -1,6 +1,6 @@
 /* ============================================
    SchoolTube – script.js
-   Cloudflare Worker proxy + HLS.js
+   Google Apps Script fetcher + Direct HTML5 video
    ============================================ */
 
 (() => {
@@ -10,7 +10,7 @@
   const YT_API_BASE = "https://www.googleapis.com/youtube/v3";
   const MAX_RESULTS = 12;
   const STORAGE_KEY = "schooltube_api_key";
-  const WORKER_KEY = "schooltube_worker_url";
+  const GAS_KEY = "schooltube_gas_url";
 
   // ── DOM refs ──
   const $ = (sel) => document.querySelector(sel);
@@ -51,7 +51,7 @@
 
   // ── State ──
   let apiKey = localStorage.getItem(STORAGE_KEY) || "";
-  let workerUrl = (localStorage.getItem(WORKER_KEY) || "").replace(/\/+$/, "");
+  let gasUrl = (localStorage.getItem(GAS_KEY) || "").trim();
   let currentQuery = "";
   let nextPageToken = "";
   let currentVideoId = "";
@@ -61,7 +61,7 @@
   // ── Init ──
   function init() {
     if (!apiKey) showApiModal();
-    else if (!workerUrl) showSettingsModal();
+    else if (!gasUrl) showSettingsModal();
 
     searchForm.addEventListener("submit", onSearch);
     apiKeyBtn.addEventListener("click", showApiModal);
@@ -99,9 +99,9 @@
   // ─────────────────────────────────────────────
 
   async function playVideo(videoId, title, channel, date, desc) {
-    if (!workerUrl) {
+    if (!gasUrl) {
       showSettingsModal();
-      showToast("⚠️ Worker URL을 먼저 설정해주세요.");
+      showToast("⚠️ Apps Script URL을 먼저 설정해주세요.");
       return;
     }
 
@@ -128,24 +128,24 @@
     playerError.hidden = true;
 
     try {
-      // Worker를 통해 Piped API 호출
+      // Apps Script 호출 (GET 요청 리디렉션 처리)
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 15000);
 
-      const res = await fetch(`${workerUrl}/streams/${videoId}`, {
+      // GAS는 항상 GET 파라미터로 데이터를 받습니다. ?v=videoId
+      const fetchUrl = `${gasUrl}?v=${videoId}`;
+      const res = await fetch(fetchUrl, {
         signal: controller.signal,
       });
       clearTimeout(timer);
 
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || `응답 오류 (${res.status})`);
+        throw new Error(`응답 오류 (${res.status})`);
       }
 
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
-      // 썸네일 설정
       if (data.thumbnailUrl) {
         playerVideo.poster = data.thumbnailUrl;
       }
@@ -162,15 +162,13 @@
     playerLoading.hidden = true;
     playerError.hidden = true;
 
-    // ── Strategy 1: HLS (adaptive streaming) ──
+    // ── Strategy 1: HLS ──
     if (data.hls) {
       if (typeof Hls !== "undefined" && Hls.isSupported()) {
         hlsInstance = new Hls({
           maxBufferLength: 30,
           maxMaxBufferLength: 60,
           startLevel: -1,
-          // Worker가 이미 URL을 재작성했으므로
-          // HLS.js 요청은 자동으로 Worker를 경유
         });
 
         hlsInstance.loadSource(data.hls);
@@ -182,7 +180,7 @@
 
         hlsInstance.on(Hls.Events.ERROR, (_event, errorData) => {
           if (errorData.fatal) {
-            console.warn("HLS fatal error, trying MP4 fallback");
+            console.warn("HLS error, trying MP4 fallback");
             destroyHls();
             tryMp4Fallback(data);
           }
@@ -190,7 +188,6 @@
         return;
       }
 
-      // Native HLS (Safari, iOS)
       if (playerVideo.canPlayType("application/vnd.apple.mpegurl")) {
         playerVideo.src = data.hls;
         playerVideo.play().catch(() => {});
@@ -203,20 +200,17 @@
   }
 
   function tryMp4Fallback(data) {
-    // Muxed streams (video + audio combined)
     const muxed = (data.videoStreams || [])
       .filter((s) => !s.videoOnly && s.url)
       .sort((a, b) => (b.height || 0) - (a.height || 0));
 
     if (muxed.length > 0) {
-      // 720p 이하를 우선 선택 (크롬북 성능 고려)
       const preferred = muxed.find((s) => s.height <= 720) || muxed[0];
       playerVideo.src = preferred.url;
       playerVideo.play().catch(() => {});
       return;
     }
 
-    // Video-only fallback
     const videoOnly = (data.videoStreams || [])
       .filter((s) => s.url)
       .sort((a, b) => (b.height || 0) - (a.height || 0));
@@ -227,7 +221,7 @@
       return;
     }
 
-    showPlayerError("재생 가능한 스트림을 찾지 못했습니다.");
+    showPlayerError("재생 가능한 스트림을 찾지 못했습니다. 앱 스크립트 연결을 확인하세요.");
   }
 
   function destroyHls() {
@@ -252,60 +246,45 @@
   }
 
   function updateBadge() {
-    if (proxyBadge && workerUrl) {
-      try {
-        const host = new URL(workerUrl).host;
-        proxyBadge.textContent = `via ${host}`;
-        proxyBadge.hidden = false;
-      } catch {
-        proxyBadge.hidden = true;
-      }
+    if (proxyBadge && gasUrl) {
+      proxyBadge.textContent = "via Apps Script";
+      proxyBadge.hidden = false;
+    } else if (proxyBadge) {
+      proxyBadge.hidden = true;
     }
   }
 
   // ─────────────────────────────────────────────
-  // WORKER TEST
+  // GAS TEST
   // ─────────────────────────────────────────────
 
   async function testWorker() {
-    const url = workerUrlInput.value.trim().replace(/\/+$/, "");
-    if (!url) {
-      testResult.textContent = "URL을 입력해주세요.";
+    const url = workerUrlInput.value.trim();
+    if (!url || !url.includes("script.google.com/macros/s/")) {
+      testResult.textContent = "올바른 GAS URL을 입력해주세요.";
       testResult.className = "test-result fail";
       return;
     }
 
     settingsTestBtn.disabled = true;
-    testResult.textContent = "Worker 연결 테스트 중…";
+    testResult.textContent = "Apps Script 연결 테스트 중… (+영상 스트림 로딩)";
     testResult.className = "test-result testing";
 
     try {
-      // Step 1: Health check
-      const controller1 = new AbortController();
-      const timer1 = setTimeout(() => controller1.abort(), 6000);
-      const res1 = await fetch(`${url}/health`, { signal: controller1.signal });
-      clearTimeout(timer1);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 12000);
+      
+      // 테스트 비디오: 9bZkp7q19f0
+      const res = await fetch(`${url}?v=9bZkp7q19f0`, { signal: controller.signal });
+      clearTimeout(timer);
 
-      if (!res1.ok) throw new Error(`Health check 실패 (${res1.status})`);
+      if (!res.ok) throw new Error(`서버 응답 오류 (${res.status})`);
 
-      testResult.textContent = "✓ Worker 연결됨. 영상 스트림 테스트 중…";
-
-      // Step 2: Stream test
-      const controller2 = new AbortController();
-      const timer2 = setTimeout(() => controller2.abort(), 12000);
-      const res2 = await fetch(`${url}/streams/dQw4w9WgXcQ`, {
-        signal: controller2.signal,
-      });
-      clearTimeout(timer2);
-
-      if (!res2.ok) throw new Error(`스트림 API 실패 (${res2.status})`);
-
-      const data = await res2.json();
+      const data = await res.json();
       if (data.error) throw new Error(data.error);
 
-      const hasStreams =
-        data.hls || (data.videoStreams && data.videoStreams.length > 0);
-      if (!hasStreams) throw new Error("스트림 URL 없음");
+      const hasStreams = data.hls || (data.videoStreams && data.videoStreams.length > 0);
+      if (!hasStreams) throw new Error("스트림 데이터가 없습니다 (Google 서버에서 차단되었거나 코드가 잘못됨).");
 
       testResult.textContent = "✅ 완벽하게 작동합니다! 적용 버튼을 눌러주세요.";
       testResult.className = "test-result success";
@@ -350,12 +329,12 @@
     apiKey = key;
     localStorage.setItem(STORAGE_KEY, apiKey);
     hideApiModal();
-    if (!workerUrl) showSettingsModal();
+    if (!gasUrl) showSettingsModal();
   }
 
   // ── Settings Modal ──
   function showSettingsModal() {
-    workerUrlInput.value = workerUrl;
+    workerUrlInput.value = gasUrl;
     testResult.textContent = "";
     testResult.className = "test-result";
     settingsModal.hidden = false;
@@ -365,16 +344,16 @@
     settingsModal.hidden = true;
   }
   function saveSettings() {
-    const url = workerUrlInput.value.trim().replace(/\/+$/, "");
+    const url = workerUrlInput.value.trim();
     if (!url) {
       workerUrlInput.focus();
       return;
     }
-    workerUrl = url;
-    localStorage.setItem(WORKER_KEY, workerUrl);
+    gasUrl = url;
+    localStorage.setItem(GAS_KEY, gasUrl);
     hideSettingsModal();
     updateBadge();
-    showToast("✅ Worker URL 저장됨");
+    showToast("✅ Apps Script URL 저장됨");
 
     if (currentVideoId) {
       loadStream(currentVideoId);

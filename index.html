@@ -52,14 +52,14 @@
     </div>
   </div>
 
-  <!-- ===== WORKER URL MODAL ===== -->
+  <!-- ===== APPS SCRIPT URL MODAL ===== -->
   <div id="settings-modal" class="modal-overlay" hidden>
     <div class="modal modal-wide">
-      <h2>⚙️ 프록시 서버 설정</h2>
-      <p>Cloudflare Worker URL을 입력하세요. Worker가 영상 스트림을 대신 가져와 학교 차단을 우회합니다.</p>
+      <h2>⚙️ 프록시 서버 설정 (Apps Script)</h2>
+      <p>Google Apps Script 웹 앱 URL을 입력하세요. 구글 서버를 통해 영상 주소를 가져와 차단을 우회합니다.</p>
 
-      <label class="select-label" for="worker-url-input">Worker URL</label>
-      <input id="worker-url-input" type="url" placeholder="https://schooltube-proxy.xxx.workers.dev" />
+      <label class="select-label" for="worker-url-input">Apps Script URL</label>
+      <input id="worker-url-input" type="url" placeholder="https://script.google.com/macros/s/…/exec" />
 
       <div class="test-row">
         <button id="settings-test-btn" class="btn-outline">연결 테스트</button>
@@ -67,11 +67,11 @@
       <div id="test-result" class="test-result"></div>
 
       <div class="proxy-tip">
-        <strong>📋 Worker 배포 방법:</strong><br>
-        1. <a href="https://dash.cloudflare.com" target="_blank">dash.cloudflare.com</a> 회원가입 (무료)<br>
-        2. Workers & Pages → Create Worker<br>
-        3. <code>worker.js</code> 파일 내용 전부 복붙 → Deploy<br>
-        4. 생성된 URL을 여기에 입력
+        <strong>📋 배포 방법:</strong><br>
+        1. <a href="https://script.google.com" target="_blank">script.google.com</a> 접속 → 새 프로젝트<br>
+        2. <code>Code.gs</code> 파일 내용 전부 복붙<br>
+        3. 배포 → 새 배포 → 웹 앱 (반드시 <b>모든 사용자</b> 설정)<br>
+        4. 생성된 웹 앱 URL을 여기에 입력
       </div>
 
       <div class="modal-actions">
